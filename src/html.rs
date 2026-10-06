@@ -1,10 +1,11 @@
 use std::cell::RefCell;
 use std::sync::LazyLock;
 
-use lol_html::html_content::{ContentType, Element};
-use lol_html::{element, rewrite_str, text, RewriteStrSettings};
+use lol_html::html_content::{ContentType, Element, TextChunk};
+use lol_html::{element, rewrite_str, text, HandlerResult, RewriteStrSettings};
 use regex::Regex;
 
+use crate::css::{insert_prefix, prefix_tail, url_starts};
 use crate::{rebase_css, rebase_url, Error, Prefix};
 
 const URL_ATTRIBUTES: &[&str] = &[
@@ -34,8 +35,9 @@ static REFRESH: LazyLock<Regex> = LazyLock::new(|| {
 /// Rewrite root-relative URLs in an HTML document.
 ///
 /// Covers `href`, `src`, `srcset`, `poster`, `action`, `formaction`, `<object data>`,
-/// `<meta content>` for Open Graph and Twitter images and for `refresh`, `style="…"` and
-/// `<style>` blocks. Everything else comes out byte for byte as it went in.
+/// `<meta content>` for Open Graph and Twitter images and for `refresh`, `style="…"`,
+/// `<style>` blocks and the markup inside `<noscript>`. Everything else comes out byte for
+/// byte as it went in.
 ///
 /// A rewritten attribute comes out double-quoted, whatever its original quoting.
 pub fn rebase_html(html: &str, prefix: &Prefix) -> Result<String, Error> {
@@ -43,6 +45,7 @@ pub fn rebase_html(html: &str, prefix: &Prefix) -> Result<String, Error> {
         return Ok(html.to_owned());
     }
     let style = RefCell::new(String::new());
+    let noscript = RefCell::new(String::new());
     let settings = RewriteStrSettings::new()
         .with_enable_esi_tags(false)
         .append_element_content_handler(element!("*", |el| {
@@ -50,17 +53,31 @@ pub fn rebase_html(html: &str, prefix: &Prefix) -> Result<String, Error> {
             Ok(())
         }))
         .append_element_content_handler(text!("style", |chunk| {
-            let mut buffer = style.borrow_mut();
-            buffer.push_str(chunk.as_str());
-            if chunk.last_in_text_node() {
-                chunk.replace(&rebase_css(&buffer, prefix), ContentType::Html);
-                buffer.clear();
-            } else {
-                chunk.remove();
-            }
-            Ok(())
+            replace_whole_text(chunk, &style, |css| Ok(rebase_css(css, prefix)))
+        }))
+        // The parser reads `<noscript>` as raw text, so its markup is never seen as elements.
+        .append_element_content_handler(text!("noscript", |chunk| {
+            replace_whole_text(chunk, &noscript, |html| Ok(rebase_html(html, prefix)?))
         }));
-    rewrite_str(html, settings).map_err(Error::Html)
+    Ok(rewrite_str(html, settings)?)
+}
+
+/// A text node arrives in chunks: hold them back until the last one, then write the whole
+/// text once, transformed.
+fn replace_whole_text(
+    chunk: &mut TextChunk,
+    buffer: &RefCell<String>,
+    transform: impl FnOnce(&str) -> Result<String, Box<dyn std::error::Error + Send + Sync>>,
+) -> HandlerResult {
+    let mut buffer = buffer.borrow_mut();
+    buffer.push_str(chunk.as_str());
+    if chunk.last_in_text_node() {
+        chunk.replace(&transform(&buffer)?, ContentType::Html);
+        buffer.clear();
+    } else {
+        chunk.remove();
+    }
+    Ok(())
 }
 
 fn rebase_element(el: &mut Element, prefix: &Prefix) {
@@ -75,7 +92,7 @@ fn rebase_element(el: &mut Element, prefix: &Prefix) {
             n if URL_ATTRIBUTES.contains(&n) => rebase_trimmed(value, prefix),
             n if SRCSET_ATTRIBUTES.contains(&n) => rebase_srcset(value, prefix),
             "data" if tag == "object" => rebase_trimmed(value, prefix),
-            "style" => Some(rebase_css(value, prefix)).filter(|css| css != value),
+            "style" => rebase_style_attribute(value, prefix),
             "content" if tag == "meta" => rebase_meta(el, value, prefix),
             _ => None,
         };
@@ -110,6 +127,63 @@ fn rebase_meta(el: &Element, content: &str, prefix: &Prefix) -> Option<String> {
         &content[..start],
         &content[start + url.len()..]
     ))
+}
+
+/// The value is read raw, so `url(&quot;/x&quot;)` must be decoded to be seen as CSS. The
+/// prefix is inserted into the raw value, which keeps every other byte as it was.
+fn rebase_style_attribute(raw: &str, prefix: &Prefix) -> Option<String> {
+    let (css, origin) = decode_entities(raw);
+    let points: Vec<usize> = url_starts(&css, prefix)
+        .iter()
+        .map(|start| origin[start + 1])
+        .collect();
+    if points.is_empty() {
+        return None;
+    }
+    Some(insert_prefix(
+        raw,
+        &points,
+        &prefix_tail(prefix).replace('&', "&amp;"),
+    ))
+}
+
+/// Decodes the entities that matter to CSS syntax. `origin[i]` is the offset in `raw` of the
+/// character that produced byte `i` of the decoded text, and `origin[len]` is `raw.len()`.
+fn decode_entities(raw: &str) -> (String, Vec<usize>) {
+    let mut decoded = String::with_capacity(raw.len());
+    let mut origin = Vec::with_capacity(raw.len() + 1);
+    let mut i = 0;
+    while let Some(c) = raw[i..].chars().next() {
+        let (c, len) = entity_at(&raw[i..]).unwrap_or((c, c.len_utf8()));
+        origin.extend(std::iter::repeat_n(i, c.len_utf8()));
+        decoded.push(c);
+        i += len;
+    }
+    origin.push(raw.len());
+    (decoded, origin)
+}
+
+fn entity_at(text: &str) -> Option<(char, usize)> {
+    let rest = text.strip_prefix('&')?;
+    let name = &rest[..rest.find(';')?];
+    let c = match name {
+        "quot" => '"',
+        "apos" => '\'',
+        "amp" => '&',
+        "lt" => '<',
+        "gt" => '>',
+        "lpar" => '(',
+        "rpar" => ')',
+        _ => {
+            let number = name.strip_prefix('#')?;
+            let code = match number.strip_prefix(['x', 'X']) {
+                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                None => number.parse().ok()?,
+            };
+            char::from_u32(code)?
+        }
+    };
+    Some((c, name.len() + 2))
 }
 
 /// Browsers ignore whitespace around a URL attribute, so `href=" /a"` is a root-relative URL.
@@ -191,6 +265,26 @@ mod tests {
         assert_eq!(
             rebase("<style>@import '/a.css';\nb{background:url(/b.png)}</style>"),
             "<style>@import '/repo/a.css';\nb{background:url(/repo/b.png)}</style>"
+        );
+    }
+
+    #[test]
+    fn encoded_quotes_in_style_attribute() {
+        assert_eq!(
+            rebase(r#"<div style="background:url(&quot;/bg.png&quot;)"></div>"#),
+            r#"<div style="background:url(&quot;/repo/bg.png&quot;)"></div>"#
+        );
+        assert_eq!(
+            rebase(r#"<div style='background:url("/bg.png")'></div>"#),
+            r#"<div style="background:url(&quot;/repo/bg.png&quot;)"></div>"#
+        );
+    }
+
+    #[test]
+    fn markup_inside_noscript() {
+        assert_eq!(
+            rebase(r#"<noscript><img src="/a.png"><link href="/b.css"></noscript>"#),
+            r#"<noscript><img src="/repo/a.png"><link href="/repo/b.css"></noscript>"#
         );
     }
 

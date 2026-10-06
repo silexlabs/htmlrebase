@@ -61,3 +61,25 @@ fn missing_directory_is_a_clear_error() {
     assert!(matches!(err, Error::NotADirectory(_)));
     assert_eq!(err.to_string(), "/no/such/htmlrebase/dir: not a directory");
 }
+
+#[test]
+fn a_file_that_is_not_utf8_is_skipped_and_the_rest_is_rewritten() {
+    let dir = site("latin1");
+    fs::write(dir.join("about/latin1.html"), b"<a href=\"/x\">caf\xe9</a>").unwrap();
+
+    let stats = rebase_dir(&dir, &Prefix::new("repo").unwrap()).unwrap();
+    assert_eq!(stats.scanned, 4);
+    assert_eq!(stats.changed.len(), 3);
+    assert_eq!(stats.skipped.len(), 1);
+    assert!(matches!(stats.skipped[0], (ref p, Error::NotUtf8) if p.ends_with("latin1.html")));
+    assert_eq!(
+        read(&dir, "css/a.css"),
+        "body { background: url('/repo/a.png') }"
+    );
+    assert_eq!(
+        fs::read(dir.join("about/latin1.html")).unwrap(),
+        b"<a href=\"/x\">caf\xe9</a>"
+    );
+
+    fs::remove_dir_all(&dir).unwrap();
+}

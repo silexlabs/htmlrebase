@@ -13,23 +13,15 @@ pub enum Error {
     #[error("{0}: not a directory")]
     NotADirectory(PathBuf),
 
+    #[error("not valid UTF-8")]
+    NotUtf8,
+
+    #[error("has other hard links, which would change too")]
+    HardLinked,
+
     #[error(transparent)]
-    Walk(#[from] walkdir::Error),
+    Io(#[from] std::io::Error),
 
-    #[error("{path}: {source}")]
-    Io {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("cannot rewrite the HTML: {0}")]
-    Html(#[source] RewritingError),
-
-    #[error("{path}: {source}")]
-    HtmlFile {
-        path: PathBuf,
-        #[source]
-        source: Box<Error>,
-    },
+    #[error(transparent)]
+    Html(#[from] RewritingError),
 }

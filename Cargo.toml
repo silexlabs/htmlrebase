@@ -2,12 +2,14 @@
 name = "htmlrebase"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85"
 description = "Add a base URL to a static site, after any static site generator has built it: rewrites root-relative paths in HTML and CSS."
 homepage = "https://github.com/silexlabs/htmlrebase"
 repository = "https://github.com/silexlabs/htmlrebase"
-license = "GPL-3.0"
-keywords = ["static-site-generator", "base-url", "html", "css", "cli"]
+license = "GPL-3.0-only"
+keywords = ["static-site", "base-url", "html", "css", "cli"]
 categories = ["command-line-utilities", "web-programming"]
+publish = false
 
 [profile.release]
 opt-level = "s"

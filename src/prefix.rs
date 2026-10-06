@@ -24,11 +24,17 @@ impl Prefix {
             return Err(invalid("empty path segment"));
         }
         if trimmed
+            .split('/')
+            .any(|segment| segment == "." || segment == "..")
+        {
+            return Err(invalid("`.` and `..` are not allowed"));
+        }
+        if trimmed
             .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || "\"'<>()?#\\".contains(c))
+            .any(|c| c.is_whitespace() || c.is_control() || "\"'<>()?#&\\".contains(c))
         {
             return Err(invalid(
-                "spaces, quotes, brackets, parentheses, `?`, `#` and `\\` are not allowed",
+                "spaces, quotes, brackets, parentheses, `?`, `#`, `&` and `\\` are not allowed",
             ));
         }
         if trimmed.is_empty() {
@@ -85,5 +91,7 @@ mod tests {
         assert!(Prefix::new("https://example.com/repo/").is_err());
         assert!(Prefix::new("/my repo/").is_err());
         assert!(Prefix::new("/repo?x").is_err());
+        assert!(Prefix::new("/a/../b/").is_err());
+        assert!(Prefix::new(".").is_err());
     }
 }

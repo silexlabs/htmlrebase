@@ -18,23 +18,30 @@ struct Cli {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let stats = match rebase_dir(&cli.dir, &cli.prefix) {
+        Ok(stats) => stats,
+        Err(e) => {
+            eprintln!("htmlrebase: error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     if cli.prefix.is_root() {
         println!("htmlrebase: prefix is /, nothing to do");
         return ExitCode::SUCCESS;
     }
-    match rebase_dir(&cli.dir, &cli.prefix) {
-        Ok(stats) => {
-            println!(
-                "htmlrebase: {} of {} files changed, prefix {}",
-                stats.changed.len(),
-                stats.scanned,
-                cli.prefix
-            );
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("htmlrebase: error: {e}");
-            ExitCode::FAILURE
-        }
+    for (path, reason) in &stats.skipped {
+        eprintln!("htmlrebase: warning: skipped {}: {reason}", path.display());
+    }
+    println!(
+        "htmlrebase: {} of {} files changed, {} skipped, prefix {}",
+        stats.changed.len(),
+        stats.scanned,
+        stats.skipped.len(),
+        cli.prefix
+    );
+    if stats.skipped.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }

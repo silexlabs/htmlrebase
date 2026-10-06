@@ -22,19 +22,37 @@ Download a binary from the [latest release](https://github.com/silexlabs/htmlreb
 Linux only for now, on x64 and arm64. Nothing else to install.
 
 ```bash
-curl -fsSL https://github.com/silexlabs/htmlrebase/releases/latest/download/htmlrebase-linux-x64 \
-  -o /usr/local/bin/htmlrebase && chmod +x /usr/local/bin/htmlrebase
+sudo curl -fsSL https://github.com/silexlabs/htmlrebase/releases/latest/download/htmlrebase-linux-x64 \
+  -o /usr/local/bin/htmlrebase && sudo chmod +x /usr/local/bin/htmlrebase
 ```
+
+In a GitHub Actions workflow, after the build step:
+
+```yaml
+- run: |
+    curl -fsSL https://github.com/silexlabs/htmlrebase/releases/latest/download/htmlrebase-linux-x64 -o htmlrebase && chmod +x htmlrebase
+    ./htmlrebase _site --prefix /${{ github.event.repository.name }}/
+```
+
+Skip this step for an `owner.github.io` repository or a custom domain: the site is served at `/`.
 
 ## What it rewrites
 
 In `.html` and `.css` files, every URL that starts with a single `/`: `href`, `src`,
-`srcset`, `poster`, `action`, `<meta>` images, inline `style`, `<style>`, `url()` and
-`@import`. It leaves alone `//cdn…`, `https:`, `mailto:`, `#anchors`, relative paths, and
-URLs that already start with the prefix, so running it twice is safe. Nothing else in the
-files changes.
+`srcset`, `poster`, `action`, `<meta>` images, inline `style`, `<style>`, `<noscript>`,
+`url()`, `image-set()` and `@import`. It leaves alone `//cdn…`, `https:`, `mailto:`,
+`#anchors`, relative paths, and URLs that already start with the prefix, so running it twice
+is safe. Apart from these URLs, the files keep their bytes, except that a rewritten attribute
+comes out in double quotes.
 
-It is also a Rust library: `rebase_html`, `rebase_css`, `rebase_dir`.
+Limits:
+
+- A section of the site named like the prefix is not prefixed: with `--prefix /blog/`, a
+  link to `/blog/post/` already looks done and stays as it is.
+- JavaScript, XML (sitemap, RSS) and `.webmanifest` files are not rewritten.
+- A file that is not UTF-8, or HTML too ambiguous to rewrite safely (a `<style>` inside a
+  `<select>`), is skipped with a warning, and the command exits with an error once every
+  other file is done.
 
 ## Open to contributions
 
@@ -43,4 +61,4 @@ welcome.
 
 ## License
 
-GPL-3.0
+GPL-3.0-only

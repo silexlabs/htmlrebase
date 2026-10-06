@@ -4,10 +4,9 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to build (for a dry run)"
-        required: false
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,9 +30,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
 
       - name: Install musl tooling
         run: |
@@ -95,6 +91,14 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches the version in Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match version $version in Cargo.toml"
+            exit 1
+          fi
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -102,7 +106,8 @@ jobs:
         run: |
           mkdir -p release
           find artifacts -type f -exec cp {} release/ \;
-          ls -la release
+          cd release && sha256sum htmlrebase-* > SHA256SUMS
+          cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
           files: release/*
