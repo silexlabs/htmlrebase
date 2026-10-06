@@ -54,6 +54,22 @@ Limits:
   `<select>`), is skipped with a warning, and the command exits with an error once every
   other file is done.
 
+## Performance
+
+Measured on v0.1.0, on a Linux laptop (20 threads, SSD), with a site of 5,200 files and
+122 MB (5,000 pages of 23 KB full of links and `srcset`, 200 CSS files):
+
+- first run, every file rewritten: 10.2 s, 35% of one CPU, 5 MB of memory;
+- second run, nothing to change: 0.7 s, one CPU.
+
+The first run waits on the disk: each file is written to a temporary file, flushed with
+`fsync`, then renamed. Ideas to make it faster, pull requests welcome:
+
+- process files in parallel (it uses a single thread today);
+- drop the `fsync` per file, or make it optional: the rename already protects against a
+  crash of the process, `fsync` only adds safety against a power cut, rarely needed in CI;
+- skip files that contain no `/` worth rewriting before running the HTML parser.
+
 ## Open to contributions
 
 Builds for macOS and Windows, links inside JavaScript, SVG and XML files: pull requests are
