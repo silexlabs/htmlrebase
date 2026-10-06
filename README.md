@@ -18,7 +18,7 @@ only reads and writes files. Run it after the build.
 
 ## Install
 
-Download a binary from the [releases page](https://github.com/silexlabs/htmlrebase/releases).
+Download a binary from the [latest release](https://github.com/silexlabs/htmlrebase/releases/latest).
 Linux only for now, on x64 and arm64. Nothing else to install.
 
 ```bash
